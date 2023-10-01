@@ -39,12 +39,6 @@ def version_mismatch_enricher(event: ExecutionBaseEvent, params: PrometheusParam
             for result in results
             if result.get("metric", {}).get("node") is not None
         ]
-        logging.warning(results)
-        logging.warning(kubernetes_api_version)
-        logging.warning(nodes_by_version)
-        # event.add_enrichment(
-        #    [PrometheusBlock(data=prometheus_result, query=params.promql_query)],
-        # )
         event.add_enrichment(
             [
                 MarkdownBlock(f"The kubernetes api server is version {kubernetes_api_version}."),
@@ -54,7 +48,7 @@ def version_mismatch_enricher(event: ExecutionBaseEvent, params: PrometheusParam
                     table_name="*Node Versions*",
                 ),
                 MarkdownBlock(
-                    f"To solver this alert, make sure to update all of your nodes to version {kubernetes_api_version}."
+                    f"To solve this alert, make sure to update all of your nodes to version {kubernetes_api_version}."
                 ),
             ],
             annotations={SlackAnnotations.ATTACHMENT: True},
