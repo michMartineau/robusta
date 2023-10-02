@@ -1,3 +1,4 @@
+import logging
 import re
 import urllib.parse
 from collections import defaultdict
@@ -111,32 +112,37 @@ class Transformer:
         # Convert other markdown content
         return markdown2.markdown(mrkdwn_text)
 
-    @classmethod
-    def to_html(cls, blocks: List[BaseBlock]) -> str:
-        lines = []
-        for block in blocks:
-            if isinstance(block, MarkdownBlock):
-                if not block.text:
-                    continue
-                lines.append(f"{cls.__markdown_to_html(block.text)}")
-            elif isinstance(block, DividerBlock):
-                lines.append("-------------------")
-            elif isinstance(block, JsonBlock):
-                lines.append(block.json_str)
-            elif isinstance(block, KubernetesDiffBlock):
-                for diff in block.diffs:
-                    lines.append(
-                        cls.__markdown_to_html(f"*{'.'.join(diff.path)}*: {diff.other_value} ==> {diff.value}")
-                    )
-            elif isinstance(block, HeaderBlock):
-                lines.append(f"<strong>{block.text}</strong>")
-            elif isinstance(block, ListBlock):
-                lines.extend(cls.__markdown_to_html(block.to_markdown().text))
-            elif isinstance(block, TableBlock):
-                if block.table_name:
-                    lines.append(cls.__markdown_to_html(block.table_name))
-                lines.append(tabulate(block.render_rows(), headers=block.headers, tablefmt="html").replace("\n", ""))
-        return "\n".join(lines)
+    def to_html(self, blocks: List[BaseBlock]) -> str:
+        return "\n".join(self.block_to_html(block) for block in blocks)
+
+    def block_to_html(self, block: BaseBlock) -> str:
+        if isinstance(block, MarkdownBlock):
+            if block.text:
+                return f"{self.__markdown_to_html(block.text)}"
+            else:
+                return ""
+        elif isinstance(block, DividerBlock):
+            return "-------------------"
+        elif isinstance(block, JsonBlock):
+            return block.json_str
+        elif isinstance(block, KubernetesDiffBlock):
+            return "\n".join(
+                self.__markdown_to_html(f"*{'.'.join(diff.path)}*: {diff.other_value} ==> {diff.value}")
+                for diff in block.diffs
+            )
+        elif isinstance(block, HeaderBlock):
+            return f"<strong>{block.text}</strong>"
+        elif isinstance(block, ListBlock):
+            return self.__markdown_to_html(block.to_markdown().text)
+        elif isinstance(block, TableBlock):
+            if block.table_name:
+                name_part = self.__markdown_to_html(block.table_name)
+            else:
+                name_part = ""
+            return name_part + tabulate(block.render_rows(), headers=block.headers, tablefmt="html").replace("\n", "")
+        else:
+            logging.warning(f"Unsupported block type ({type(block)}) found when rendering HTML")
+            return ""
 
     @classmethod
     def to_standard_markdown(cls, blocks: List[BaseBlock]) -> str:
@@ -178,7 +184,6 @@ class Transformer:
 
     @staticmethod
     def scanReportBlock_to_fileblock(block: BaseBlock) -> BaseBlock:
-
         if not isinstance(block, ScanReportBlock):
             return block
 
@@ -243,7 +248,6 @@ class Transformer:
             sections[item.kind][f"{item.name}/{item.namespace}"].append(item)
 
         for kind, grouped_issues in sections.items():
-
             rows = [["Priority", "Name", "Namespace", "Issues"]]
             for group, scanRes in grouped_issues.items():
                 n, ns = group.split("/", 1)
