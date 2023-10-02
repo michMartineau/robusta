@@ -1,19 +1,27 @@
 import logging
 
 from robusta.api import (
-    PROMETHEUS_REQUEST_TIMEOUT_SECONDS,
-    ExecutionBaseEvent,
     MarkdownBlock,
+    PrometheusKubernetesAlert,
     PrometheusParams,
     SlackAnnotations,
     TableBlock,
     action,
+    run_prometheus_query,
 )
-from robusta.integrations.prometheus.utils import get_prometheus_connect
+
+
+class VersionMismatchParams(PrometheusParams):
+    """
+    :var version_mismatch_query: The query to get all the build versions.
+    """
+
+    # made as parameter since job label doesn't always exist
+    version_mismatch_query: str = 'count by (git_version, node) (label_replace(kubernetes_build_info{job!~"kube-dns|coredns"}, "git_version", "$1", "git_version", "(v[0-9]*.[0-9]*).*"))'
 
 
 @action
-def version_mismatch_enricher(event: ExecutionBaseEvent, params: PrometheusParams):
+def version_mismatch_enricher(alert: PrometheusKubernetesAlert, params: VersionMismatchParams):
     """
     Enriches the finding with a prometheus query
 
@@ -21,37 +29,41 @@ def version_mismatch_enricher(event: ExecutionBaseEvent, params: PrometheusParam
     https://prometheus.io/docs/prometheus/latest/querying/examples/
     """
 
-    try:
-        prom = get_prometheus_connect(params)
-        list_version_query = 'count by (git_version, cluster, node) (label_replace(kubernetes_build_info{job!~"kube-dns|coredns"}, "git_version", "$1", "git_version", "(v[0-9]*.[0-9]*).*"))'
-        prom_params = {"timeout": PROMETHEUS_REQUEST_TIMEOUT_SECONDS}
-        prom.check_prometheus_connection(prom_params)
-        results = prom.custom_query(query=list_version_query, params=prom_params)
-        kubernetes_api_version = max(
-            [
-                result.get("metric", {}).get("git_version")
-                for result in results
-                if result.get("metric", {}).get("node") is None
-            ]
-        )
-        nodes_by_version = [
-            [result.get("metric", {}).get("node"), result.get("metric", {}).get("git_version")]
-            for result in results
-            if result.get("metric", {}).get("node") is not None
-        ]
-        event.add_enrichment(
-            [
-                MarkdownBlock(f"The kubernetes api server is version {kubernetes_api_version}."),
-                TableBlock(
-                    nodes_by_version,
-                    ["name", "version"],
-                    table_name="*Node Versions*",
-                ),
-                MarkdownBlock(
-                    f"To solve this alert, make sure to update all of your nodes to version {kubernetes_api_version}."
-                ),
-            ],
-            annotations={SlackAnnotations.ATTACHMENT: True},
-        )
-    except Exception:
-        logging.error(f"Failed getting query", exc_info=True)
+    query_result = run_prometheus_query(prometheus_params=params, query=params.version_mismatch_query)
+    if query_result.result_type == "error" or query_result.vector_result is None:
+        logging.error(f"version_mismatch_enricher failed to get prometheus results.")
+        return
+    # there must be atleast two different versions for this alert
+    metrics = [result.metric for result in query_result.vector_result]
+    versions = [metric.get("git_version") for metric in metrics]
+    if len(versions) < 2:
+        logging.error(f"Invalid prometheus results for version_mismatch_enricher.")
+        return
+
+    kubernetes_api_versions = [metric.get("git_version") for metric in metrics if metric.get("node") is None]
+
+    # you can have multiple versions of the api server in the metrics at once
+    # i.e. at the time of kubernetes upgrade both will show up in the metrics
+    if len(kubernetes_api_versions) == 0:
+        logging.error(f"Missing api server results for version_mismatch_enricher.")
+        return
+
+    kubernetes_api_version = max(kubernetes_api_versions)
+    nodes_by_version = [
+        [metric.get("node"), metric.get("git_version")] for metric in metrics if metric.get("node") is not None
+    ]
+    alert.add_enrichment(
+        [
+            MarkdownBlock(f"Automatic investigation for the alert {alert.alert_name}, showing why it fired:"),
+            MarkdownBlock(f"The kubernetes api server is version {kubernetes_api_version}."),
+            TableBlock(
+                nodes_by_version,
+                ["name", "version"],
+                table_name="*Node Versions*",
+            ),
+            MarkdownBlock(
+                f"To solve this alert, make sure to update all of your nodes to version {kubernetes_api_version}."
+            ),
+        ],
+        annotations={SlackAnnotations.ATTACHMENT: True},
+    )

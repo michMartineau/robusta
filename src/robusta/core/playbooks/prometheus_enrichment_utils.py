@@ -1,3 +1,4 @@
+import logging
 import math
 from collections import defaultdict, namedtuple
 from datetime import datetime, timedelta
@@ -67,14 +68,13 @@ def get_node_internal_ip(node: Node) -> str:
     return internal_ip
 
 
-def run_prometheus_query(
+def run_prometheus_query_range(
     prometheus_params: PrometheusParams, promql_query: str, starts_at: datetime, ends_at: datetime
 ) -> PrometheusQueryResult:
     if not starts_at or not ends_at:
         raise Exception("Invalid timerange specified for the prometheus query.")
 
-    if prometheus_params.prometheus_additional_labels and prometheus_params.add_additional_labels:
-        promql_query = promql_query.replace("}", __get_additional_labels_str(prometheus_params) + "}")
+    promql_query = __add_additional_labels(promql_query, prometheus_params)
 
     query_duration = ends_at - starts_at
     resolution = get_resolution_from_duration(query_duration)
@@ -156,7 +156,7 @@ def create_chart_from_prometheus_query(
         alert_duration = ends_at - alert_starts_at
         graph_duration = max(alert_duration, timedelta(minutes=graph_duration_minutes))
         starts_at = ends_at - graph_duration
-    prometheus_query_result = run_prometheus_query(prometheus_params, promql_query, starts_at, ends_at)
+    prometheus_query_result = run_prometheus_query_range(prometheus_params, promql_query, starts_at, ends_at)
     if prometheus_query_result.result_type != "matrix":
         raise Exception(
             f"Unsupported query result for robusta chart, Type received: {prometheus_query_result.result_type}, type supported 'matrix'"
@@ -196,13 +196,11 @@ def create_chart_from_prometheus_query(
     for line in lines:
         value = [(min_time, line.value), (max_time, line.value)]
 
-        if line.label == "Memory Limit" \
-                or line.label == "CPU Limit":
+        if line.label == "Memory Limit" or line.label == "CPU Limit":
             plot_list.append((line.label, value))
             graph_plot_color_list.append("#FF5959")
 
-        elif line.label == "Memory Request" \
-                or line.label == "CPU Request":
+        elif line.label == "Memory Request" or line.label == "CPU Request":
             plot_list.append((line.label, value))
             graph_plot_color_list.append("#0DC291")
 
@@ -242,6 +240,28 @@ def create_chart_from_prometheus_query(
         chart.add(plot[0], plot[1])
 
     return chart
+
+
+def run_prometheus_query(prometheus_params: PrometheusParams, query: str) -> PrometheusQueryResult:
+    """
+    This function runs prometheus query and returns the result, NOT query_range
+    """
+    try:
+        prom = get_prometheus_connect(prometheus_params)
+        query = __add_additional_labels(query, prometheus_params)
+        prom_params = {"timeout": PROMETHEUS_REQUEST_TIMEOUT_SECONDS}
+        prom.check_prometheus_connection(prom_params)
+        results = prom.custom_query(query=query, params=prom_params)
+        return PrometheusQueryResult(results)
+    except Exception as e:
+        logging.error(f"Exception while querying prometheus.", exc_info=True)
+        return PrometheusQueryResult({"resultType": "error", "result": str(e)})
+
+
+def __add_additional_labels(query: str, prometheus_params: PrometheusParams) -> str:
+    if not prometheus_params.prometheus_additional_labels or not prometheus_params.add_additional_labels:
+        return query
+    return query.replace("}", __get_additional_labels_str(prometheus_params) + "}")
 
 
 def __get_additional_labels_str(prometheus_params: PrometheusParams) -> str:
