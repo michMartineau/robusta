@@ -54,7 +54,7 @@ def version_mismatch_enricher(alert: PrometheusKubernetesAlert, params: VersionM
     ]
     alert.add_enrichment(
         [
-            MarkdownBlock(f"Automatic investigation for the alert {alert.alert_name}, showing why it fired:"),
+            MarkdownBlock(f"Automatic {alert.alert_name} investigation:"),
             MarkdownBlock(f"The kubernetes api server is version {kubernetes_api_version}."),
             TableBlock(
                 nodes_by_version,
