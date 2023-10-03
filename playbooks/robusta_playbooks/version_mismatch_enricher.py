@@ -35,7 +35,7 @@ def version_mismatch_enricher(alert: PrometheusKubernetesAlert, params: VersionM
         return
     # there must be atleast two different versions for this alert
     metrics = [result.metric for result in query_result.vector_result]
-    versions = [metric.get("git_version") for metric in metrics]
+    versions = list(set([metric.get("git_version") for metric in metrics]))
     if len(versions) < 2:
         logging.error(f"Invalid prometheus results for version_mismatch_enricher.")
         return
@@ -43,7 +43,7 @@ def version_mismatch_enricher(alert: PrometheusKubernetesAlert, params: VersionM
     kubernetes_api_versions = [metric.get("git_version") for metric in metrics if metric.get("node") is None]
 
     # you can have multiple versions of the api server in the metrics at once
-    # i.e. at the time of kubernetes upgrade both will show up in the metrics
+    # i.e. at the time of kubernetes upgrade both will show up in the metrics for several minutes
     if len(kubernetes_api_versions) == 0:
         logging.error(f"Missing api server results for version_mismatch_enricher.")
         return
