@@ -52,6 +52,10 @@ def version_mismatch_enricher(alert: PrometheusKubernetesAlert, params: VersionM
     nodes_by_version = [
         [metric.get("node"), metric.get("git_version")] for metric in metrics if metric.get("node") is not None
     ]
+
+    # in the case where a node is of a higher version than the api server
+    api_server_msg = "and cluster " if max(kubernetes_api_versions) != max(versions) else " "
+
     alert.add_enrichment(
         [
             MarkdownBlock(f"Automatic {alert.alert_name} investigation:"),
@@ -62,7 +66,7 @@ def version_mismatch_enricher(alert: PrometheusKubernetesAlert, params: VersionM
                 table_name="*Node Versions*",
             ),
             MarkdownBlock(
-                f"To solve this alert, make sure to update all of your nodes to version {kubernetes_api_version}."
+                f"To solve this alert, make sure to update all of your nodes {api_server_msg}to version {max(versions)}."
             ),
         ],
         annotations={SlackAnnotations.ATTACHMENT: True},
