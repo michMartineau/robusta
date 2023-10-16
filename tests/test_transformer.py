@@ -52,7 +52,10 @@ class TestTransformer:
             ),
             (ListBlock(["hello", "world"]), "<p><b> hello\n</b> world</p>\n"),
             (HeaderBlock("HEADER"), "<strong>HEADER</strong>"),
-            (TableBlock([]), ""),  # TODO
+            (
+                TableBlock(rows=[[1, 2, "x"], ["p", 0, None]], headers=["h1", "h2", "h3"], table_name="table_name"),
+                """<p>table_name</p>\n<table><thead><tr><th>h1  </th><th style="text-align: right;">  h2</th><th>h3  </th></tr></thead><tbody><tr><td>1   </td><td style="text-align: right;">   2</td><td>x   </td></tr><tr><td>p   </td><td style="text-align: right;">   0</td><td>    </td></tr></tbody></table>""",
+            ),
         ],
     )
     def test_to_html(self, transformer, block, expected_result):

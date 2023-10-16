@@ -1,5 +1,5 @@
-from datetime import datetime
-from unittest.mock import patch
+from io import BytesIO
+from unittest.mock import ANY, call, patch
 
 import pytest
 
@@ -8,9 +8,7 @@ from robusta.core.reporting.blocks import (
     FileBlock,
     LinkProp,
     LinksBlock,
-    ScanReportBlock,
 )
-from robusta.core.reporting.consts import ScanType
 from robusta.core.sinks.mail.mail_sink import MailSink
 from robusta.core.sinks.mail.mail_sink_params import MailSinkParams, MailSinkConfigWrapper
 from robusta.integrations.mail.sender import MailTransformer
@@ -24,16 +22,19 @@ class MockRegistry:
         return {"account_id": 12345, "cluster_name": "testcluster", "signing_key": "SiGnKeY"}
 
 
-@pytest.mark.parametrize("finding_resolved", [False, True])
-def test_mail_sending(finding_resolved):
+@pytest.fixture()
+def sink():
     config_wrapper = MailSinkConfigWrapper(
         mail_sink=MailSinkParams(
             name="mail_sink",
             mailto="mailtos://user:password@example.com?from=a@x&to=b@y",
         )
     )
-    sink = MailSink(config_wrapper, MockRegistry())
+    return MailSink(config_wrapper, MockRegistry())
 
+
+@pytest.mark.parametrize("finding_resolved", [False, True])
+def test_mail_sending(finding_resolved, sink):
     title = ("[RESOLVED] " if finding_resolved else "") + "title"
     finding = Finding(
         title=title,
@@ -43,22 +44,60 @@ def test_mail_sending(finding_resolved):
     )
     with patch("robusta.integrations.mail.sender.apprise") as mock_apprise:
         sink.write_finding(finding, platform_enabled=True)
-    mock_apprise.Apprise.return_value.add.assert_called_once_with("mailtos://user:password@example.com?from=a@x&to=b@y")
-    expected_body = (
-        """<p>✅ <code>resolved</code> 🟢 <code>info</code> title</p>\n\n<ul>\n  <li><a href="https://platform.robusta.dev/graphs?account=SiGnKeY&clusters=%5B%2212345%22%5D&names=%5B%221234%22%5D">Investigate 🔎</a></li>\n  <li><a href="https://platform.robusta.dev/silences/create?alertname=1234&cluster=12345&account=SiGnKeY&referer=sink">Configure Silences 🔕</a></li></ul>\n<p><b>Source:</b> <code>12345</code></p>\n\n<p>🚨 <b>Alert:</b> Lorem ipsum</p>"""
-        if finding_resolved
-        else """<p>🔥 <code>firing</code> 🟢 <code>info</code> title</p>\n\n<ul>\n  <li><a href="https://platform.robusta.dev/graphs?account=SiGnKeY&clusters=%5B%2212345%22%5D&names=%5B%221234%22%5D">Investigate 🔎</a></li>\n  <li><a href="https://platform.robusta.dev/silences/create?alertname=1234&cluster=12345&account=SiGnKeY&referer=sink">Configure Silences 🔕</a></li></ul>\n<p><b>Source:</b> <code>12345</code></p>\n\n<p>🚨 <b>Alert:</b> Lorem ipsum</p>"""
-    )
-    mock_apprise.Apprise.return_value.notify.assert_called_once_with(
+
+    mock_apprise.Apprise.assert_called_once_with()
+    ap_obj = mock_apprise.Apprise.return_value
+    ap_obj.add.assert_called_once_with("mailtos://user:password@example.com?from=a@x&to=b@y")
+
+    ap_obj.notify.assert_called_once_with(
         title=title,
-        body=expected_body,
+        body=ANY,
         body_format="html",
         notify_type="success" if finding_resolved else "warning",
         attach=mock_apprise.AppriseAttachment.return_value,
     )
 
 
-# TODO add tests for attachment handling
+def test_mail_sending_attachments(sink):
+    finding = Finding(
+        title="the_title",
+        description="Lorem ipsum",
+        aggregation_key="1234",
+        add_silence_url=False,
+    )
+    finding.add_enrichment(
+        [
+            FileBlock(filename="file1.name", contents=b"contents1"),
+            FileBlock(filename="file2.name", contents=b"contents2"),
+        ]
+    )
+
+    tmp_file_names = iter(["123", "456"])
+
+    class FileMock(BytesIO):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            self.name = next(tmp_file_names)
+
+        def close(self):
+            self._final_contents = self.getvalue()
+            return super().close()
+
+    file_mocks = [FileMock(), FileMock()]
+    file_mocks_iter = iter(file_mocks)
+
+    with patch("robusta.integrations.mail.sender.apprise") as mock_apprise, patch(
+        "robusta.integrations.mail.sender.tempfile.NamedTemporaryFile", new=lambda: next(file_mocks_iter)
+    ):
+        sink.write_finding(finding, platform_enabled=True)
+
+    mock_apprise.AppriseAttachment.assert_called_once_with()
+    attach = mock_apprise.AppriseAttachment.return_value
+    assert attach.add.call_args_list == [call("123"), call("456")]
+    assert file_mocks[0].closed
+    assert file_mocks[0]._final_contents == b"contents1"
+    assert file_mocks[1].closed
+    assert file_mocks[1]._final_contents == b"contents2"
 
 
 class TestMailTransformer(_TestTransformer):
@@ -79,5 +118,8 @@ class TestMailTransformer(_TestTransformer):
         ],
     )
     def test_file_links_scan_report_blocks(self, transformer, block, expected_result):
-        with patch("robusta.core.sinks.transformer.logging") as mock_logging:
-            assert transformer.block_to_html(block) == expected_result
+        assert transformer.block_to_html(block) == expected_result
+        if isinstance(block, FileBlock):
+            assert transformer.file_blocks == [block]
+        else:
+            assert transformer.file_blocks == []

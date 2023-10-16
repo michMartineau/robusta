@@ -18,7 +18,7 @@ from robusta.core.sinks.transformer import Transformer
 
 class MailTransformer(Transformer):
     def __init__(self, *args, **kwargs):
-        super(MailTransformer).__init__(*args, **kwargs)
+        super().__init__(*args, **kwargs)
         self.file_blocks = []
 
     def block_to_html(self, block: BaseBlock) -> str:
@@ -26,7 +26,7 @@ class MailTransformer(Transformer):
         if isinstance(block, FileBlock):
             self.file_blocks.append(block)
             return f"<p>See attachment {block.filename}</p>"
-        if isinstance(block, LinksBlock):
+        elif isinstance(block, LinksBlock):
             return (
                 "<ul>\n"
                 + "\n".join(f'  <li><a href="{link.url}">{link.text}</a></li>' for link in block.links)
@@ -76,10 +76,7 @@ class MailSender:
             for file_block in transformer.file_blocks:
                 # This is awkward, but it's the standard way to handle
                 # attachments in apprise - by providing local filesystem
-                # names. TODO: We could work around this limitation using
-                # some AttachBase-related hacking (create a subclass that
-                # would pretend to be downloading content from the web
-                # and just return the in-memory file contents).
+                # names.
                 f = tempfile.NamedTemporaryFile()
                 attachment_files.append(f)
                 f.write(file_block.contents)
