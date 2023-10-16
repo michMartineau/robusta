@@ -66,7 +66,7 @@ class MailSender:
             blocks.extend(enrichment.blocks)
 
         transformer = MailTransformer()
-        html_body = transformer.to_html(blocks).strip()
+        html_body = self.__build_html(transformer.to_html(blocks).strip())
 
         ap_obj = apprise.Apprise()
         attachments = apprise.AppriseAttachment()
@@ -123,3 +123,25 @@ class MailSender:
             links.append(LinkProp(text=f"{video_link.name} 🎬", url=video_link.url))
 
         return LinksBlock(links=links)
+
+    def __build_html(self, body):
+        return f"""<html>
+<style>
+    {self.__get_css()}
+</style>
+<body>
+    {body}
+</body>
+</html>
+"""
+
+    def __get_css(self):
+        return """
+* {
+    font-family: sans-serif;
+}
+code {
+    background: #eee;
+    color: #a00;
+}
+"""
