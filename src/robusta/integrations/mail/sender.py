@@ -44,7 +44,6 @@ class MailSender:
         self.cluster_name = cluster_name
 
     def send_finding_via_email(self, finding: Finding, platform_enabled: bool):
-        # TODO this method is too big, too complex and awkward for unit tests. Improve this.
         blocks: List[BaseBlock] = []
 
         if finding.title:
